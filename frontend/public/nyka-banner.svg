@@ -1,0 +1,18 @@
+<svg width="800" height="200" viewBox="0 0 800 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4f8cff"/>
+      <stop offset="100%" stop-color="#6dd5ed"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffe082"/>
+      <stop offset="100%" stop-color="#ff8a65"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="200" rx="20" fill="url(#bg)"/>
+  <circle cx="140" cy="140" r="14" fill="url(#accent)"/>
+  <circle cx="380" cy="100" r="12" fill="url(#accent)"/>
+  <circle cx="520" cy="140" r="16" fill="url(#accent)"/>
+  <text x="50" y="60" fill="white" font-size="36" font-weight="700" font-family="Arial, sans-serif">Nyka BI Dashboard</text>
+  <text x="50" y="100" fill="rgba(255,255,255,0.85)" font-size="18" font-family="Arial, sans-serif">Ask questions about revenue, campaigns, and performance.</text>
+</svg>

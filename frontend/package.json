@@ -1,0 +1,19 @@
+{
+  "name": "conv-bi-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "axios": "latest",
+    "csv-parser": "^3.2.0",
+    "formidable": "^3.5.4",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "recharts": "latest"
+  }
+}

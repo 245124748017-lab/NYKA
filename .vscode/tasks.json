@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start Backend (Python)",
+			"type": "shell",
+			"command": "cd backend; .\\venv\\Scripts\\Activate.ps1; python -m uvicorn app.main:app --reload",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Start Frontend",
+			"type": "shell",
+			"command": "cd frontend; npm run dev",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}
