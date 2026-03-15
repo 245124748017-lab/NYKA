@@ -1,5 +1,9 @@
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from .database import SessionLocal
+from .models import User, Feedback, Base
 from typing import Optional
 import os
 import pandas as pd
@@ -7,12 +11,84 @@ from fastapi.middleware.cors import CORSMiddleware
 from .gemini_api import call_gemini_api
 import json
 
+# --- API for user registration ---
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+app = FastAPI()
+
+# Dependency to get DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Create tables if not exist
+Base.metadata.create_all(bind=SessionLocal.kw['bind'])
+
+@app.post("/register")
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+    # Check if user already exists
+    if db.query(User).filter(User.email == request.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = User(name=request.name, email=request.email, password=request.password)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"success": True, "user_id": user.id, "name": user.name}
+
+@app.post("/login")
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email, User.password == request.password).first()
+    if user:
+        return {"success": True, "user_id": user.id, "name": user.name}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
 def load_data(filename: Optional[str] = None) -> pd.DataFrame:
     data_path = os.path.join(os.path.dirname(__file__), '../data/nyka.csv')
     return pd.read_csv(data_path)
 
 
+
 app = FastAPI()
+
+# Dependency to get DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Create tables if not exist
+Base.metadata.create_all(bind=SessionLocal.kw['bind'])
+# --- API to get all users ---
+@app.get("/users")
+def get_users(db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    return [{"id": u.id, "name": u.name, "email": u.email} for u in users]
+
+# --- API to add feedback ---
+class FeedbackRequest(BaseModel):
+    user_email: Optional[str] = None
+    message: str
+
+@app.post("/feedback")
+def submit_feedback(feedback: FeedbackRequest, db: Session = Depends(get_db)):
+    fb = Feedback(user_email=feedback.user_email, message=feedback.message)
+    db.add(fb)
+    db.commit()
+    db.refresh(fb)
+    return {"success": True, "id": fb.id}
 
 
 

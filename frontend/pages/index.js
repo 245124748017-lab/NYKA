@@ -22,6 +22,26 @@ export default function Home() {
   const [favorites, setFavorites] = useState([]);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [mounted, setMounted] = useState(false);
+  // Feedback state
+  const [feedback, setFeedback] = useState('');
+  const [feedbackMsg, setFeedbackMsg] = useState('');
+  // const [userEmail, setUserEmail] = useState('');
+
+  const handleFeedback = async (e) => {
+    e.preventDefault();
+    setFeedbackMsg('');
+    const res = await fetch('http://localhost:8000/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: feedback })
+    });
+    if (res.ok) {
+      setFeedbackMsg('Thank you for your feedback!');
+      setFeedback('');
+    } else {
+      setFeedbackMsg('Failed to submit feedback.');
+    }
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -243,8 +263,38 @@ export default function Home() {
     <>
       <Navbar onThemeToggle={handleThemeToggle} isDarkMode={isDarkMode} />
       <div style={{ padding: '20px', marginTop: '80px', maxWidth: '1200px', marginLeft: 'auto', marginRight: 'auto' }}>
-        {/* CSV Upload Component removed */}
         {/* ...existing code... */}
+              {/* Feedback floating section */}
+              <div style={{
+                position: 'fixed',
+                bottom: 24,
+                right: 24,
+                zIndex: 9999,
+                width: 320,
+                background: '#fffbe6',
+                border: '2px solid #ffd700',
+                borderRadius: 12,
+                boxShadow: '0 2px 12px rgba(255, 215, 0, 0.10)',
+                padding: 18,
+                fontSize: '1em',
+                color: '#333',
+              }}>
+                <h4 style={{ margin: '0 0 8px 0', color: '#b48800', fontWeight: 700 }}>Share Feedback</h4>
+                <form onSubmit={handleFeedback}>
+                  <textarea
+                    value={feedback}
+                    onChange={e => setFeedback(e.target.value)}
+                    placeholder="Your feedback..."
+                    rows={3}
+                    style={{ width: '100%', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+                    required
+                  />
+                  <button type="submit" style={{ marginTop: 8, background: '#ffd700', border: 'none', borderRadius: 4, padding: '8px 16px', fontWeight: 600, width: '100%' }}>
+                    Submit
+                  </button>
+                </form>
+                {feedbackMsg && <div style={{ marginTop: 8, color: feedbackMsg.startsWith('Thank') ? 'green' : 'red' }}>{feedbackMsg}</div>}
+              </div>
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '20px', flexDirection: 'column' }}>
           <h1 style={{ textAlign: 'center' }}>Conversational BI Dashboard</h1>
           <button
