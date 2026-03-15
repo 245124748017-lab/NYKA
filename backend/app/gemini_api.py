@@ -1,7 +1,10 @@
 import requests
+import os
+from dotenv import load_dotenv
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
-GEMINI_API_KEY = "AIzaSyCz6eFpG_M_RsYEqEc0GhdtT-KAQoBBD3E"  # User's actual Gemini API key
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 def call_gemini_api(prompt: str):
     headers = {"Content-Type": "application/json"}
