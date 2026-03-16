@@ -38,6 +38,13 @@ class FeedbackRequest(BaseModel):
     user_email: Optional[str] = None
     message: str
 
+class TranslationRequest(BaseModel):
+    text: str
+    target_language: str
+
+class DetectRequest(BaseModel):
+    text: str
+
 # ==================== APP SETUP ====================
 
 app = FastAPI(title="NYKA - Conversational BI Dashboard")
@@ -642,6 +649,115 @@ async def upload_file(file: UploadFile = File(...)):
     
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
+
+# ==================== TRANSLATION ====================
+
+@app.post("/detect-and-translate")
+async def detect_and_translate(request: DetectRequest):
+    """Auto-detect language (English, Hindi, Telugu) and translate to English"""
+    try:
+        text = request.text.strip()
+        print(f"[DETECT-TRANSLATE] Input: {text}")
+        
+        if not text:
+            return {"detected_language": "en", "translated_text": ""}
+        
+        # Character-based detection (more reliable than LLM for scripts)
+        # Telugu Unicode range: U+0C00 to U+0C7F
+        # Hindi/Devanagari Unicode range: U+0900 to U+097F
+        
+        telugu_count = sum(1 for char in text if '\u0C00' <= char <= '\u0C7F')
+        hindi_count = sum(1 for char in text if '\u0900' <= char <= '\u097F')
+        text_len = len(text)
+        
+        lang_code = 'en'  # default
+        
+        print(f"[DETECT] Telugu count: {telugu_count}, Hindi count: {hindi_count}, Total: {text_len}")
+        
+        # If more than 30% of characters are Telugu script
+        if text_len > 0 and telugu_count / text_len > 0.3:
+            lang_code = 'te'
+        # Else if more than 30% of characters are Hindi script
+        elif text_len > 0 and hindi_count / text_len > 0.3:
+            lang_code = 'hi'
+        # Otherwise assume English
+        else:
+            lang_code = 'en'
+        
+        print(f"Detected language: {lang_code}, Telugu: {telugu_count}, Hindi: {hindi_count}, Total: {len(text)}")
+        
+        # If already English, return as is
+        if lang_code == 'en':
+            print(f"[DETECT] Detected as English, returning as-is")
+            return {
+                "detected_language": "en",
+                "translated_text": text
+            }
+        
+        # Translate to English
+        print(f"[DETECT] Detected as {lang_code}, translating...")
+        
+        language_names = {
+            'hi': 'Hindi',
+            'te': 'Telugu',
+        }
+        
+        source_lang = language_names.get(lang_code, 'Unknown')
+        translate_prompt = f"Translate the following {source_lang} text to English. Only return the translated text, nothing else:\n\n{request.text}"
+        
+        print(f"[TRANSLATE] Prompt: {translate_prompt}")
+        translated = call_gemini_api(translate_prompt)
+        print(f"[TRANSLATE] Result: {translated}")
+        
+        return {
+            "detected_language": lang_code,
+            "translated_text": translated.strip()
+        }
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] Detection/translation error: {str(e)}")
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        # Fallback: return original text as English
+        return {
+            "detected_language": "en",
+            "translated_text": request.text
+        }
+
+@app.post("/translate")
+async def translate_text(request: TranslationRequest):
+    """Translate text to target language using Gemini API"""
+    try:
+        if request.target_language == 'en':
+            return {"translated_text": request.text}
+        
+        # Language mapping
+        language_names = {
+            'es': 'Spanish',
+            'fr': 'French',
+            'de': 'German',
+            'hi': 'Hindi',
+            'te': 'Telugu',
+            'zh': 'Chinese',
+            'ja': 'Japanese',
+            'pt': 'Portuguese',
+            'ru': 'Russian',
+            'ar': 'Arabic',
+            'en': 'English',
+        }
+        
+        target_lang = language_names.get(request.target_language, 'English')
+        
+        prompt = f"Translate the following text to {target_lang}. Only return the translated text, nothing else:\n\n{request.text}"
+        
+        response = call_gemini_api(prompt)
+        
+        return {
+            "translated_text": response.strip()
+        }
+    except Exception as e:
+        print(f"Translation error: {str(e)}")
+        # Fallback: return original text if translation fails
+        return {"translated_text": request.text}
 
 # ==================== HEALTH CHECK ====================
 

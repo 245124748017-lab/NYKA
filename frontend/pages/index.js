@@ -28,6 +28,12 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1', '#d084d0', '#ffb347', '#87ceeb'];
 
+const LANGUAGES = {
+  'en': 'English',
+  'hi': 'Hindi',
+  'te': 'Telugu',
+};
+
 const EXAMPLE_PROMPTS = [
   '📊 revenue by campaign type',
   '🎯 Top 5 campaigns by ROI',
@@ -51,8 +57,16 @@ export default function Home() {
   const [followUpInput, setFollowUpInput] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState('en');
+  const [detectedLanguage, setDetectedLanguage] = useState('en');
+  const [feedbackEmail, setFeedbackEmail] = useState('');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
   const chatContainerRef = useRef(null);
   const recognitionRef = useRef(null);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [speechCompleted, setSpeechCompleted] = useState(false);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -61,22 +75,36 @@ export default function Home() {
       if (SpeechRecognition) {
         recognitionRef.current = new SpeechRecognition();
         recognitionRef.current.continuous = false;
-        recognitionRef.current.interimResults = true;
-        recognitionRef.current.language = 'en-US';
+        recognitionRef.current.interimResults = false;
+        recognitionRef.current.language = 'hi-IN';  // Support Indian languages (Hindi, Telugu)
 
-        recognitionRef.current.onstart = () => setIsListening(true);
-        recognitionRef.current.onend = () => setIsListening(false);
+        recognitionRef.current.onstart = () => {
+          setIsListening(true);
+          setVoiceTranscript('');  // Clear previous transcript
+          setSpeechCompleted(false);  // Reset completion flag
+        };
+        
+        recognitionRef.current.onend = () => {
+          console.log('[SPEECH] Recognition ended, setting speechCompleted to true');
+          setIsListening(false);
+          setSpeechCompleted(true);  // Signal that speech has ended
+        };
+        
         recognitionRef.current.onresult = (event) => {
-          let interimTranscript = '';
+          let finalTranscript = '';
           for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript;
+            console.log('[SPEECH] Result:', { isFinal: event.results[i].isFinal, transcript });
             if (event.results[i].isFinal) {
-              setPrompt((prev) => prev + transcript);
-            } else {
-              interimTranscript += transcript;
+              finalTranscript += transcript + ' ';
             }
           }
+          if (finalTranscript.trim()) {
+            console.log('[SPEECH] Final transcript:', finalTranscript.trim());
+            setVoiceTranscript(finalTranscript.trim());
+          }
         };
+        
         recognitionRef.current.onerror = (event) => {
           console.error('Speech recognition error:', event.error);
           setError(`Voice input error: ${event.error}`);
@@ -103,7 +131,43 @@ export default function Home() {
     }
   }, []);
 
-  // Auto scroll chat to bottom
+  // Auto-detect and translate voice input when speech completes
+  useEffect(() => {
+    if (voiceTranscript && speechCompleted) {
+      console.log('Voice transcript received:', voiceTranscript);
+      console.log('Speech completed:', speechCompleted);
+      
+      const processVoiceInput = async () => {
+        try {
+          console.log('Sending to detect-and-translate:', voiceTranscript);
+          
+          // Auto-detect language and translate to English
+          const detectRes = await axios.post(`${API_BASE}/detect-and-translate`, {
+            text: voiceTranscript,
+          });
+          
+          console.log('Translation response:', detectRes.data);
+          
+          const englishText = detectRes.data.translated_text || voiceTranscript;
+          console.log('Setting prompt to:', englishText);
+          
+          setPrompt(englishText);
+          setVoiceTranscript('');
+          setSpeechCompleted(false);
+        } catch (error) {
+          console.error('Voice translation error:', error);
+          console.error('Error details:', error.response?.data || error.message);
+          
+          // Fallback: use original text
+          console.log('Using fallback - original text:', voiceTranscript);
+          setPrompt(voiceTranscript);
+          setVoiceTranscript('');
+          setSpeechCompleted(false);
+        }
+      };
+      processVoiceInput();
+    }
+  }, [speechCompleted]);
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
@@ -122,11 +186,29 @@ export default function Home() {
     }
   };
 
+  const translateText = useCallback(
+    async (text, targetLang) => {
+      if (targetLang === 'en' || !text) return text;
+      try {
+        const res = await axios.post(`${API_BASE}/translate`, {
+          text,
+          target_language: targetLang,
+        });
+        return res.data.translated_text;
+      } catch (error) {
+        console.error('Translation error:', error);
+        return text;
+      }
+    },
+    []
+  );
+
   const queryBackend = useCallback(
     async (query, file = currentFile) => {
       setLoading(true);
       setError(null);
       try {
+        // Send query directly without translation (user can type in any language)
         const payload = {
           prompt: query,
           filename: file === 'default' ? null : file,
@@ -284,7 +366,11 @@ export default function Home() {
               <YAxis label={{ value: yKey, angle: -90, position: 'insideLeft', offset: -10 }} />
               <Tooltip formatter={(value) => typeof value === 'number' ? value.toLocaleString() : value} />
               <Legend />
-              <Bar dataKey={yKey} fill="#8884d8" name={yKey} isAnimationActive={true} />
+              <Bar dataKey={yKey} fill="#8884d8" name={yKey} isAnimationActive={true}>
+                {data && data.length > 0 && data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         );
@@ -298,7 +384,11 @@ export default function Home() {
                 cx="50%"
                 cy="50%"
                 labelLine={true}
-                label={({ [xKey]: name, [yKey]: value }) => `${name}: ${typeof value === 'number' ? value.toLocaleString() : value}`}
+                label={(entry) => {
+                  const name = entry[xKey] || 'Unknown';
+                  const value = entry[yKey] || 0;
+                  return `${name}: ${typeof value === 'number' ? value.toLocaleString() : value}`;
+                }}
                 outerRadius={120}
                 innerRadius={0}
                 fill="#8884d8"
@@ -403,6 +493,33 @@ export default function Home() {
 
   const isFavorited = mounted && prompt && favorites.includes(prompt);
 
+  const handleFeedbackSubmit = async (e) => {
+    e.preventDefault();
+    if (!feedbackMessage.trim()) {
+      alert('Please enter a message');
+      return;
+    }
+
+    setFeedbackLoading(true);
+    try {
+      const response = await axios.post(`${API_BASE}/feedback`, {
+        user_email: feedbackEmail || null,
+        message: feedbackMessage
+      });
+      if (response.data.success) {
+        setFeedbackSubmitted(true);
+        setFeedbackEmail('');
+        setFeedbackMessage('');
+        setTimeout(() => setFeedbackSubmitted(false), 3000);
+      }
+    } catch (err) {
+      console.error('Feedback submission error:', err);
+      alert('Failed to submit feedback. Please try again.');
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
   return (
     <div className={`page-container ${isDarkMode ? 'dark-mode' : ''}`}>
       <Navbar theme={isDarkMode} onThemeToggle={toggleTheme} />
@@ -411,7 +528,8 @@ export default function Home() {
         {/* Search Section - Title Only */}
         <section className="search-section">
           <h1 className="title">🚀 Conversational Business Intelligence</h1>
-          <p className="subtitle">Ask any question about your data in plain English</p>
+          <p className="subtitle">Speak in Telugu, Hindi or English - auto-convert to English</p>
+          
         </section>
 
         {/* File Upload Section */}
@@ -610,6 +728,52 @@ export default function Home() {
             )}
           </section>
         )}
+
+        {/* Feedback Section */}
+        <section className="feedback-section">
+          <h3>📝 Share Your Feedback</h3>
+          <p className="feedback-subtitle">Help us improve NYKA - share your thoughts and suggestions</p>
+          
+          {feedbackSubmitted ? (
+            <div className="feedback-success">
+              ✅ Thank you for your feedback! We appreciate your input.
+            </div>
+          ) : (
+            <form onSubmit={handleFeedbackSubmit} className="feedback-form">
+              <div className="form-group">
+                <label htmlFor="feedback-email">Email (optional)</label>
+                <input
+                  id="feedback-email"
+                  type="email"
+                  placeholder="your.email@example.com"
+                  value={feedbackEmail}
+                  onChange={(e) => setFeedbackEmail(e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              
+              <div className="form-group">
+                <label htmlFor="feedback-message">Your Feedback *</label>
+                <textarea
+                  id="feedback-message"
+                  placeholder="Share your thoughts, suggestions, or report any issues..."
+                  value={feedbackMessage}
+                  onChange={(e) => setFeedbackMessage(e.target.value)}
+                  className="form-textarea"
+                  rows="5"
+                />
+              </div>
+              
+              <button 
+                type="submit" 
+                disabled={feedbackLoading} 
+                className="feedback-button"
+              >
+                {feedbackLoading ? '⏳ Sending...' : '📤 Send Feedback'}
+              </button>
+            </form>
+          )}
+        </section>
       </div>
     </div>
   );
