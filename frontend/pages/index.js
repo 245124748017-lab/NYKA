@@ -29,7 +29,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1', '#d084d0', '#ffb347', '#87ceeb'];
 
 const EXAMPLE_PROMPTS = [
-  '📊 Show total revenue by campaign type',
+  '📊 revenue by campaign type',
   '🎯 Top 5 campaigns by ROI',
   '📈 Revenue trend over time',
   '🔄 Conversion rate by segment',
@@ -224,16 +224,17 @@ export default function Home() {
       case 'line':
         return (
           <ResponsiveContainer {...containerProps}>
-            <LineChart data={data}>
+            <LineChart data={data} margin={{ top: 20, right: 30, left: 60, bottom: 50 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={xKey} />
-              <YAxis />
-              <Tooltip />
+              <YAxis label={{ value: yKey, angle: -90, position: 'insideLeft', offset: -10 }} />
+              <Tooltip formatter={(value) => typeof value === 'number' ? value.toLocaleString() : value} />
               <Legend />
               <Line
                 type="monotone"
                 dataKey={yKey}
                 stroke="#8884d8"
+                name={yKey}
                 dot={{ r: 4 }}
                 isAnimationActive={true}
               />
@@ -244,36 +245,42 @@ export default function Home() {
       case 'bar':
         return (
           <ResponsiveContainer {...containerProps}>
-            <BarChart data={data}>
+            <BarChart data={data} margin={{ top: 20, right: 30, left: 60, bottom: 80 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} angle={-45} textAnchor="end" height={80} />
-              <YAxis />
-              <Tooltip />
+              <XAxis dataKey={xKey} angle={-45} textAnchor="end" height={100} />
+              <YAxis label={{ value: yKey, angle: -90, position: 'insideLeft', offset: -10 }} />
+              <Tooltip formatter={(value) => typeof value === 'number' ? value.toLocaleString() : value} />
               <Legend />
-              <Bar dataKey={yKey} fill="#8884d8" isAnimationActive={true} />
+              <Bar dataKey={yKey} fill="#8884d8" name={yKey} isAnimationActive={true} />
             </BarChart>
           </ResponsiveContainer>
         );
 
       case 'pie':
         return (
-          <ResponsiveContainer {...containerProps}>
-            <PieChart>
+          <ResponsiveContainer width="100%" height={500}>
+            <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
               <Pie
                 data={data}
                 cx="50%"
                 cy="50%"
-                labelLine={false}
-                label={({ name, value }) => `${name}: ${value}`}
-                outerRadius={100}
+                labelLine={true}
+                label={({ [xKey]: name, [yKey]: value }) => `${name}: ${typeof value === 'number' ? value.toLocaleString() : value}`}
+                outerRadius={120}
+                innerRadius={0}
                 fill="#8884d8"
                 dataKey={yKey}
+                nameKey={xKey}
               >
-                {data.map((entry, index) => (
+                {data && data.length > 0 && data.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip 
+                formatter={(value) => typeof value === 'number' ? value.toLocaleString() : value}
+                contentStyle={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb' }}
+              />
+              <Legend />
             </PieChart>
           </ResponsiveContainer>
         );
@@ -281,17 +288,18 @@ export default function Home() {
       case 'area':
         return (
           <ResponsiveContainer {...containerProps}>
-            <AreaChart data={data}>
+            <AreaChart data={data} margin={{ top: 20, right: 30, left: 60, bottom: 50 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={xKey} />
-              <YAxis />
-              <Tooltip />
+              <YAxis label={{ value: yKey, angle: -90, position: 'insideLeft', offset: -10 }} />
+              <Tooltip formatter={(value) => typeof value === 'number' ? value.toLocaleString() : value} />
               <Legend />
               <Area
                 type="monotone"
                 dataKey={yKey}
                 fill="#8884d8"
                 stroke="#8884d8"
+                name={yKey}
                 isAnimationActive={true}
               />
             </AreaChart>
@@ -353,16 +361,19 @@ export default function Home() {
       <Navbar theme={isDarkMode} onThemeToggle={toggleTheme} />
 
       <div className="main-content">
+        {/* Search Section - Title Only */}
+        <section className="search-section">
+          <h1 className="title">🚀 Conversational Business Intelligence</h1>
+          <p className="subtitle">Ask any question about your data in plain English</p>
+        </section>
+
         {/* File Upload Section */}
         <section className="upload-section">
           <UploadCSV onFileUpload={handleFileUpload} currentFile={currentFile} />
         </section>
 
-        {/* Search Section */}
-        <section className="search-section">
-          <h1 className="title">🚀 Conversational Business Intelligence</h1>
-          <p className="subtitle">Ask any question about your data in plain English</p>
-
+        {/* Search/Query Section */}
+        <section className="query-section">
           <form onSubmit={handleSubmit} className="query-form">
             <div className="input-wrapper">
               <input

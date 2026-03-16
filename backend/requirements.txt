@@ -4,3 +4,4 @@ SQLAlchemy
 pydantic
 openai
 pandas
+python-multipart

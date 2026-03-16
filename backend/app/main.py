@@ -145,59 +145,286 @@ def improved_infer_query(prompt: str, df: pd.DataFrame):
     p = prompt.lower().strip()
     columns = list(df.columns)
     
-    # Time series detection - highest priority
-    time_keywords = ['trend', 'over time', 'by date', 'monthly', 'daily', 'weekly', 'when', 'timeline']
-    is_time_series = any(kw in p for kw in time_keywords)
+    # Debug: log the prompt
+    print(f"DEBUG: Processing prompt: '{p}'")
     
+    # DETECT QUERY TYPE FIRST
+    is_pie = any(kw in p for kw in ['distribution', 'breakdown', 'proportion', 'composition', 'split', 'divide', 'pie'])
+    is_time_series = any(kw in p for kw in ['trend', 'over time', 'by date', 'monthly', 'daily', 'weekly', 'when', 'timeline', 'history', 'time period'])
+    is_top_n = any(kw in p for kw in ['top ', 'best ', 'worst ', 'highest', 'lowest'])
+    is_compare = any(kw in p for kw in ['compare', 'comparison', 'versus', 'vs', 'difference', 'across'])
+    is_correlation = any(kw in p for kw in ['correlation', 'relationship', 'relationship between', 'impact', 'effect'])
+    
+    print(f"DEBUG: pie={is_pie}, time={is_time_series}, top={is_top_n}, compare={is_compare}, corr={is_correlation}")
+    
+    # DETECT METRIC
     metric_map = {
-        'revenue': 'Revenue',
-        'roi': 'ROI',
-        'click': 'Clicks',
-        'impression': 'Impressions',
-        'conversion': 'Conversions',
+        'revenue': ['Revenue', 'Sales', 'Total'],
+        'roi': ['ROI', 'Return'],
+        'click': ['Clicks', 'Click_Through_Rate'],
+        'impression': ['Impressions', 'Views'],
+        'conversion': ['Conversions', 'Conversion_Rate'],
+        'engagement': ['Engagement_Score', 'Engagement'],
+        'acquisition': ['Acquisition_Cost', 'Cost', 'CAC'],
+        'lead': ['Leads', 'Lead_Count'],
+        'profit': ['Profit', 'Net_Revenue'],
     }
     
     metric = None
-    for keyword, col in metric_map.items():
-        if keyword in p and col in columns:
-            metric = col
-            break
+    for keyword, col_names in metric_map.items():
+        if keyword in p:
+            for col in col_names:
+                if col in columns:
+                    metric = col
+                    break
+            if metric:
+                break
     
+    # DETECT GROUP/DIMENSION
     group_map = {
-        'segment': 'Customer_Segment',
-        'segment': 'Customer_Segment',
-        'campaign': 'Campaign_Type',
-        'date': 'Date',
-        'region': 'Region',
-        'product': 'Product_Category',
+        'segment': ['Customer_Segment'],
+        'campaign': ['Campaign_Type', 'Campaign_ID'],
+        'date': ['Date'],
+        'channel': ['Channel_Used'],
+        'language': ['Language'],
+        'target': ['Target_Audience'],
     }
     
     group = None
-    for keyword, col in group_map.items():
-        if keyword in p and col in columns:
-            group = col
-            break
+    for keyword, col_names in group_map.items():
+        if keyword in p:
+            for col in col_names:
+                if col in columns:
+                    group = col
+                    break
+            if group:
+                break
+    
+    # ===== CASE 1: PIE CHART (Distribution) =====
+    if is_pie:
+        print("DEBUG: Detected PIE chart")
+        if p.strip() in ['pie chart', 'pie']:
+            # Pie chart without specific metric - use defaults
+            if 'Revenue' in columns and 'Customer_Segment' in columns:
+                query = "df.groupby('Customer_Segment')['Revenue'].sum().reset_index()"
+                return query, "pie", "Customer_Segment", "Revenue"
+        elif metric and group:
+            query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
+            return query, "pie", group, metric
+        elif group:
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if numeric_cols:
+                metric = numeric_cols[0]
+                query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
+                return query, "pie", group, metric
+        elif metric:
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+            if categorical_cols:
+                group = categorical_cols[0]
+                query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
+                return query, "pie", group, metric
+        else:
+            # Default pie
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if categorical_cols and numeric_cols:
+                query = f"df.groupby('{categorical_cols[0]}')['{numeric_cols[0]}'].sum().reset_index()"
+                return query, "pie", categorical_cols[0], numeric_cols[0]
+    
+    # ===== CASE 2: TIME SERIES (Trend) =====
+    if is_time_series and 'Date' in columns:
+        print("DEBUG: Detected TIME SERIES")
+        if not metric:
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            metric = numeric_cols[0] if numeric_cols else 'Revenue'
+        
+        query = f"df.assign(Date=pd.to_datetime(df['Date'], format='%d-%m-%Y', errors='coerce')).groupby(pd.Grouper(key='Date', freq='ME'))['{metric}'].sum().reset_index().sort_values('Date')"
+        return query, "line", "Date", metric
+    
+    # ===== CASE 3: TOP N =====
+    if is_top_n:
+        print("DEBUG: Detected TOP N")
+        import re
+        top_match = re.search(r'top (\d+)', p)
+        n = int(top_match.group(1)) if top_match else 5
+        
+        if not metric:
+            metric = 'Revenue' if 'Revenue' in columns else df.select_dtypes(include=['number']).columns[0]
+        
+        if group:
+            query = f"df.groupby('{group}')['{metric}'].sum().reset_index().sort_values('{metric}', ascending=False).head({n})"
+            return query, "bar", group, metric
+        else:
+            query = f"df.nlargest({n}, '{metric}')[['Campaign_ID', '{metric}']]" if 'Campaign_ID' in columns else f"df.nlargest({n}, '{metric}')"
+            return query, "bar", "Campaign_ID" if 'Campaign_ID' in columns else columns[0], metric
+    
+    # ===== CASE 4: COMPARISON (by group) =====
+    if is_compare or (metric and group):
+        print(f"DEBUG: Detected COMPARISON (metric={metric}, group={group})")
+        if not metric:
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            metric = numeric_cols[0] if numeric_cols else 'Revenue'
+        if not group:
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+            group = categorical_cols[0] if categorical_cols else 'Campaign_Type'
+        
+        query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
+        return query, "bar", group, metric
+    
+    # ===== CASE 5: METRIC ONLY (Summary Stats) =====
+    if metric:
+        print(f"DEBUG: METRIC ONLY - {metric}")
+        query = f"df[['{metric}']].describe().reset_index()"
+        return query, "table", None, None
+    
+    # ===== CASE 6: GROUP ONLY (Value Counts) =====
+    if group:
+        print(f"DEBUG: GROUP ONLY - {group}")
+        query = f"df['{group}'].value_counts().reset_index()"
+        return query, "bar", group, "count"
+    
+    # ===== DEFAULT FALLBACKS =====
+    print("DEBUG: Using DEFAULT fallback")
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+    
+    if numeric_cols and categorical_cols:
+        query = f"df.groupby('{categorical_cols[0]}')['{numeric_cols[0]}'].sum().reset_index()"
+        print(f"DEBUG: Returning default bar: {categorical_cols[0]} vs {numeric_cols[0]}")
+        return query, "bar", categorical_cols[0], numeric_cols[0]
+    
+    # Ultimate fallback
+    query = f"df[{columns[:3]}].head(10)"
+    return query, "table", None, None
+    
+    # Time series detection - highest priority
+    time_keywords = ['trend', 'over time', 'by date', 'monthly', 'daily', 'weekly', 'when', 'timeline', 'history', 'time period']
+    is_time_series = any(kw in p for kw in time_keywords)
+    
+    # Expanded metric detection with more keywords
+    metric_map = {
+        'revenue': ['Revenue', 'Sales', 'Total'],
+        'roi': ['ROI', 'Return'],
+        'click': ['Clicks', 'Click_Through_Rate'],
+        'impression': ['Impressions', 'Views'],
+        'conversion': ['Conversions', 'Conversion_Rate'],
+        'performance': ['Performance_Score', 'Rating'],
+        'engagement': ['Engagement_Rate', 'Engagement'],
+        'profit': ['Profit', 'Net_Revenue'],
+        'cost': ['Cost', 'Customer_Acquisition_Cost'],
+        'rate': ['Rate', 'Percentage'],
+        'count': ['Count', 'Total_Count'],
+        'average': ['Average', 'Mean'],
+    }
+    
+    metric = None
+    matched_keyword = None
+    for keyword, col_names in metric_map.items():
+        if keyword in p:
+            for col in col_names:
+                if col in columns:
+                    metric = col
+                    matched_keyword = keyword
+                    break
+            if metric:
+                break
+    
+    # Expanded group detection
+    group_map = {
+        'segment': ['Customer_Segment', 'Segment'],
+        'campaign': ['Campaign_Type', 'Campaign', 'Campaign_Name'],
+        'date': ['Date', 'Date_Range'],
+        'region': ['Region', 'Location', 'Geography'],
+        'product': ['Product_Category', 'Product', 'Product_Type'],
+        'category': ['Category', 'Type'],
+        'channel': ['Channel', 'Marketing_Channel'],
+        'customer': ['Customer', 'Customer_Name', 'Customer_ID'],
+        'source': ['Source', 'Traffic_Source'],
+    }
+    
+    group = None
+    for keyword, col_names in group_map.items():
+        if keyword in p:
+            for col in col_names:
+                if col in columns:
+                    group = col
+                    break
+            if group:
+                break
     
     # TIME SERIES: Date is specified or time context exists
     if is_time_series and 'Date' in columns:
         if metric:
             query = f"df.assign(Date=pd.to_datetime(df['Date'], format='%d-%m-%Y', errors='coerce')).groupby(pd.Grouper(key='Date', freq='ME'))['{metric}'].sum().reset_index().sort_values('Date')"
             return query, "line", "Date", metric
+        else:
+            # Default time series with first numeric column
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if numeric_cols:
+                metric = numeric_cols[0]
+                query = f"df.assign(Date=pd.to_datetime(df['Date'], format='%d-%m-%Y', errors='coerce')).groupby(pd.Grouper(key='Date', freq='ME'))['{metric}'].sum().reset_index().sort_values('Date')"
+                return query, "line", "Date", metric
+    
+    # DISTRIBUTION/PIE queries
+    if any(kw in p for kw in ['distribution', 'breakdown', 'proportion', 'composition', 'split', 'divide', 'pie']):
+        # If user just said "pie chart", use default grouping
+        if p.strip() == 'pie chart' or p.strip() == 'pie':
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if categorical_cols and numeric_cols:
+                group = categorical_cols[0]
+                metric = numeric_cols[0]
+            
+        if metric and group:
+            query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
+            return query, "pie", group, metric
+        elif group:
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if numeric_cols:
+                metric = numeric_cols[0]
+                query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
+                return query, "pie", group, metric
+        elif metric:
+            # If only metric, group by first categorical column
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+            if categorical_cols:
+                group = categorical_cols[0]
+                query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
+                return query, "pie", group, metric
+        else:
+            # Default: group first categorical by first numeric
+            categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if categorical_cols and numeric_cols:
+                query = f"df.groupby('{categorical_cols[0]}')['{numeric_cols[0]}'].sum().reset_index()"
+                return query, "pie", categorical_cols[0], numeric_cols[0]
     
     # TOP N extraction
     top_match = __import__('re').search(r'top (\d+)', p)
-    if top_match and metric:
+    if top_match:
         n = int(top_match.group(1))
-        query = f"df[['{group if group else columns[0]}','{metric}']].sort_values('{metric}', ascending=False).head({n})"
-        return query, "bar", (group if group else columns[0]), metric
+        if metric and group:
+            query = f"df.groupby('{group}')['{metric}'].sum().reset_index().sort_values('{metric}', ascending=False).head({n})"
+            return query, "bar", group, metric
+        elif metric:
+            query = f"df.nlargest({n}, '{metric}')"
+            return query, "bar", None, metric
+    
+    # COMPARISON queries
+    if any(kw in p for kw in ['compare', 'comparison', 'versus', 'vs', 'difference']):
+        if metric and group:
+            query = f"df.groupby('{group}')['{metric}'].sum().reset_index().sort_values('{metric}', ascending=False)"
+            return query, "bar", group, metric
+    
+    # CORRELATION/RELATIONSHIP queries
+    if any(kw in p for kw in ['correlation', 'relationship', 'relationship between', 'impact']):
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        if len(numeric_cols) >= 2:
+            return f"df[['{numeric_cols[0]}', '{numeric_cols[1]}']].dropna()", "scatter", numeric_cols[0], numeric_cols[1]
     
     # GROUPBY: metric + group specified
     if metric and group:
         query = f"df.groupby('{group}')['{metric}'].sum().reset_index()"
-        
-        # Decide chart type
-        if 'distribution' in p or 'breakdown' in p or 'proportion' in p:
-            return query, "pie", group, metric
         return query, "bar", group, metric
     
     # METRIC ONLY: Just show metric (summary)
@@ -205,13 +432,22 @@ def improved_infer_query(prompt: str, df: pd.DataFrame):
         query = f"df[['{metric}']].describe().reset_index()"
         return query, "table", None, None
     
-    # FALLBACK: Default to revenue by segment
-    if 'Revenue' in columns and 'Customer_Segment' in columns:
-        query = "df.groupby('Customer_Segment')['Revenue'].sum().reset_index()"
-        return query, "bar", "Customer_Segment", "Revenue"
+    # GROUP ONLY: Show counts
+    if group and not metric:
+        query = f"df['{group}'].value_counts().reset_index()"
+        return query, "bar", group, "count"
     
-    # Ultimate fallback
-    query = f"df[{columns[:3]}].head(10)"
+    # FALLBACK: Try to find any meaningful aggregation
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+    
+    if numeric_cols and categorical_cols:
+        query = f"df.groupby('{categorical_cols[0]}')['{numeric_cols[0]}'].sum().reset_index()"
+        return query, "bar", categorical_cols[0], numeric_cols[0]
+    
+    # Ultimate fallback - just show selected columns
+    available_cols = columns[:3] if len(columns) >= 3 else columns
+    query = f"df[{available_cols}].head(10)"
     return query, "table", None, None
 
 
