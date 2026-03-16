@@ -1,51 +1,60 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/router';
 import axios from 'axios';
 import Navbar from '../components/Navbar';
 import SearchBar from '../components/SearchBar';
-// ...existing code...
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area, ScatterChart, Scatter } from 'recharts';
+import UploadCSV from '../components/UploadCSV';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area,
+  ScatterChart,
+  Scatter,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Legend,
+} from 'recharts';
 
-const EXAMPLE_PROMPTS = [
-  'Show total revenue by campaign type',
-  'Show revenue by customer segment',
-  'Show summary statistics',
-];
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1', '#d084d0', '#ffb347', '#87ceeb'];
 
+const EXAMPLE_PROMPTS = [
+  '📊 Show total revenue by campaign type',
+  '🎯 Top 5 campaigns by ROI',
+  '📈 Revenue trend over time',
+  '🔄 Conversion rate by segment',
+  '💰 Compare ROI across segments',
+];
+
 export default function Home() {
+  const router = useRouter();
   const [prompt, setPrompt] = useState('');
-  // ...existing code...
   const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [queryHistory, setQueryHistory] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [mounted, setMounted] = useState(false);
-  // Feedback state
-  const [feedback, setFeedback] = useState('');
-  const [feedbackMsg, setFeedbackMsg] = useState('');
-  // const [userEmail, setUserEmail] = useState('');
+  const [currentFile, setCurrentFile] = useState('default');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [followUpInput, setFollowUpInput] = useState('');
+  const [showChat, setShowChat] = useState(false);
+  const chatContainerRef = useRef(null);
 
-  const handleFeedback = async (e) => {
-    e.preventDefault();
-    setFeedbackMsg('');
-    const res = await fetch('http://localhost:8000/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: feedback })
-    });
-    if (res.ok) {
-      setFeedbackMsg('Thank you for your feedback!');
-      setFeedback('');
-    } else {
-      setFeedbackMsg('Failed to submit feedback.');
-    }
-  };
-
+  // Load from localStorage
   useEffect(() => {
     setMounted(true);
-    // Load data from localStorage only after component mounts
     if (typeof window !== 'undefined') {
       const savedTheme = localStorage.getItem('nyka-theme');
       if (savedTheme === 'dark') {
@@ -54,135 +63,211 @@ export default function Home() {
       }
 
       const savedHistory = localStorage.getItem('nyka-query-history');
-      if (savedHistory) {
-        setQueryHistory(JSON.parse(savedHistory));
-      }
+      if (savedHistory) setQueryHistory(JSON.parse(savedHistory));
 
       const savedFavorites = localStorage.getItem('nyka-favorites');
-      if (savedFavorites) {
-        setFavorites(JSON.parse(savedFavorites));
-      }
+      if (savedFavorites) setFavorites(JSON.parse(savedFavorites));
     }
   }, []);
 
-  const queryBackend = async (query) => {
-    setLoading(true);
-    try {
-      const payload = { prompt: query };
-      // ...existing code...
-      const res = await axios.post('http://localhost:8000/query', payload);
-      // Add to history
-      if (mounted) {
-        const newHistory = [query, ...queryHistory.slice(0, 9)]; // Keep last 10
-        setQueryHistory(newHistory);
-        localStorage.setItem('nyka-query-history', JSON.stringify(newHistory));
+  // Auto scroll chat to bottom
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  const toggleTheme = () => {
+    const newTheme = !isDarkMode;
+    setIsDarkMode(newTheme);
+    if (newTheme) {
+      document.body.classList.add('dark-mode');
+      localStorage.setItem('nyka-theme', 'dark');
+    } else {
+      document.body.classList.remove('dark-mode');
+      localStorage.setItem('nyka-theme', 'light');
+    }
+  };
+
+  const queryBackend = useCallback(
+    async (query, file = currentFile) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const payload = {
+          prompt: query,
+          filename: file === 'default' ? null : file,
+        };
+
+        const res = await axios.post(`${API_BASE}/query`, payload, {
+          timeout: 30000,
+        });
+
+        if (res.data.success) {
+          const data = res.data;
+          setResponse(data);
+
+          // Add to history
+          if (mounted) {
+            const newHistory = [query, ...queryHistory.slice(0, 9)];
+            setQueryHistory(newHistory);
+            localStorage.setItem('nyka-query-history', JSON.stringify(newHistory));
+          }
+
+          // Initialize chat with first message
+          setChatMessages([
+            {
+              type: 'assistant',
+              text: data.analysis,
+              timestamp: new Date(),
+            },
+          ]);
+          setShowChat(true);
+
+          return data;
+        } else {
+          throw new Error(res.data.message || 'Query failed');
+        }
+      } catch (err) {
+        const errorMsg =
+          err.response?.data?.detail ||
+          err.message ||
+          'Error querying backend. Please try again.';
+        setError(errorMsg);
+        console.error('Query error:', err);
+        return null;
+      } finally {
+        setLoading(false);
       }
-      return res.data;
+    },
+    [currentFile, mounted, queryHistory]
+  );
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!prompt.trim()) return;
+    await queryBackend(prompt);
+  };
+
+  const handleExampleClick = async (example) => {
+    setPrompt(example);
+    await queryBackend(example);
+  };
+
+  const handleFollowUp = async (e) => {
+    e.preventDefault();
+    if (!followUpInput.trim() || !response) return;
+
+    // Add user message to chat
+    setChatMessages((prev) => [
+      ...prev,
+      { type: 'user', text: followUpInput, timestamp: new Date() },
+    ]);
+
+    setFollowUpInput('');
+    setLoading(true);
+
+    try {
+      // For now, generate a contextual follow-up
+      const followUpQuery = `${prompt} - ${followUpInput}`;
+      const result = await queryBackend(followUpQuery);
+
+      if (result) {
+        setChatMessages((prev) => [
+          ...prev,
+          { type: 'assistant', text: result.analysis, timestamp: new Date() },
+        ]);
+        setResponse(result);
+      }
     } catch (err) {
-      console.error(err);
-      alert('Error querying backend');
-      return null;
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          type: 'error',
+          text: 'Failed to process follow-up question',
+          timestamp: new Date(),
+        },
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!prompt.trim()) return;
-    const data = await queryBackend(prompt);
-    setResponse(data);
-  };
-
-  const handleExampleClick = async (example) => {
-    setPrompt(example);
-    const data = await queryBackend(example);
-    setResponse(data);
-  };
-
-  const exportData = () => {
-    if (!response?.data) return;
-    const dataStr = JSON.stringify(response.data, null, 2);
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-    const exportFileDefaultName = 'nyka-data.json';
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
-  };
-
-  const handleThemeToggle = () => {
-    if (!mounted) return;
-    const newTheme = !isDarkMode;
-    setIsDarkMode(newTheme);
-    localStorage.setItem('nyka-theme', newTheme ? 'dark' : 'light');
-    document.body.classList.toggle('dark-mode', newTheme);
-  };
-
   const toggleFavorite = (query) => {
-    if (!mounted) return;
-    const newFavorites = favorites.includes(query)
-      ? favorites.filter(f => f !== query)
-      : [query, ...favorites];
+    let newFavorites;
+    if (favorites.includes(query)) {
+      newFavorites = favorites.filter((q) => q !== query);
+    } else {
+      newFavorites = [query, ...favorites.slice(0, 4)];
+    }
     setFavorites(newFavorites);
     localStorage.setItem('nyka-favorites', JSON.stringify(newFavorites));
   };
 
-  const renderChart = (result) => {
-    if (!result) return null;
+  const handleFileUpload = (filename) => {
+    setCurrentFile(filename);
+    setResponse(null);
+    setPrompt('');
+  };
 
-    const { chartType, data, xKey, yKey } = result;
+  const renderChart = () => {
+    if (!response || !response.data) return null;
 
-    if (chartType === 'line') {
-      return (
-        <div style={{ width: '100%', height: '400px' }}>
-          <ResponsiveContainer width="100%" height="100%">
+    const { chartType, data, xKey, yKey } = response;
+    const containerProps = {
+      width: '100%',
+      height: 400,
+      margin: { top: 20, right: 30, left: 0, bottom: 20 },
+    };
+
+    switch (chartType) {
+      case 'line':
+        return (
+          <ResponsiveContainer {...containerProps}>
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={xKey} />
-              <YAxis label={{ value: yKey, angle: -90, position: 'insideLeft' }} />
+              <YAxis />
               <Tooltip />
-              <Line type="monotone" dataKey={yKey} stroke="#8884d8" strokeWidth={3} dot={{ r: 6 }} />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey={yKey}
+                stroke="#8884d8"
+                dot={{ r: 4 }}
+                isAnimationActive={true}
+              />
             </LineChart>
           </ResponsiveContainer>
-        </div>
-      );
-    }
+        );
 
-    if (chartType === 'bar') {
-      return (
-        <div style={{ width: '100%', height: '400px' }}>
-          <ResponsiveContainer width="100%" height="100%">
+      case 'bar':
+        return (
+          <ResponsiveContainer {...containerProps}>
             <BarChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} />
-              <YAxis label={{ value: yKey, angle: -90, position: 'insideLeft' }} />
+              <XAxis dataKey={xKey} angle={-45} textAnchor="end" height={80} />
+              <YAxis />
               <Tooltip />
-              <Bar dataKey={yKey} radius={[4, 4, 0, 0]}>
-                {data.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Bar>
+              <Legend />
+              <Bar dataKey={yKey} fill="#8884d8" isAnimationActive={true} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
-      );
-    }
+        );
 
-    if (chartType === 'pie') {
-      return (
-        <div style={{ width: '100%', height: '400px' }}>
-          <ResponsiveContainer width="100%" height="100%">
+      case 'pie':
+        return (
+          <ResponsiveContainer {...containerProps}>
             <PieChart>
               <Pie
                 data={data}
-                dataKey={yKey}
-                nameKey={xKey}
                 cx="50%"
                 cy="50%"
+                labelLine={false}
+                label={({ name, value }) => `${name}: ${value}`}
                 outerRadius={100}
                 fill="#8884d8"
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                dataKey={yKey}
               >
                 {data.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -191,318 +276,274 @@ export default function Home() {
               <Tooltip />
             </PieChart>
           </ResponsiveContainer>
-        </div>
-      );
-    }
+        );
 
-    if (chartType === 'area') {
-      return (
-        <div style={{ width: '100%', height: '400px' }}>
-          <ResponsiveContainer width="100%" height="100%">
+      case 'area':
+        return (
+          <ResponsiveContainer {...containerProps}>
             <AreaChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={xKey} />
-              <YAxis label={{ value: yKey, angle: -90, position: 'insideLeft' }} />
+              <YAxis />
               <Tooltip />
-              <Area type="monotone" dataKey={yKey} stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
+              <Legend />
+              <Area
+                type="monotone"
+                dataKey={yKey}
+                fill="#8884d8"
+                stroke="#8884d8"
+                isAnimationActive={true}
+              />
             </AreaChart>
           </ResponsiveContainer>
-        </div>
-      );
-    }
+        );
 
-    if (chartType === 'scatter') {
-      return (
-        <div style={{ width: '100%', height: '400px' }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart data={data}>
+      case 'scatter':
+        return (
+          <ResponsiveContainer {...containerProps}>
+            <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} />
-              <YAxis dataKey={yKey} label={{ value: yKey, angle: -90, position: 'insideLeft' }} />
+              <XAxis type="number" dataKey={xKey} />
+              <YAxis type="number" dataKey={yKey} />
               <Tooltip />
-              <Scatter dataKey={yKey} fill="#8884d8" />
+              <Legend />
+              <Scatter
+                name={yKey}
+                data={data}
+                fill="#8884d8"
+                isAnimationActive={true}
+              />
             </ScatterChart>
           </ResponsiveContainer>
-        </div>
-      );
-    }
+        );
 
-    if (result.error) {
-      return <p style={{ color: 'red' }}>{result.error}</p>;
-    }
-
-    if (Array.isArray(result.data) && result.data.length > 0) {
-      return (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '20px' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f5f5f5' }}>
-                {Object.keys(result.data[0]).map((key) => (
-                  <th key={key} style={{ padding: '10px', border: '1px solid #ddd', textAlign: 'left' }}>{key}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {result.data.map((row, index) => (
-                <tr key={index}>
-                  {Object.values(row).map((value, i) => (
-                    <td key={i} style={{ padding: '10px', border: '1px solid #ddd' }}>{value}</td>
+      case 'table':
+        return (
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  {Object.keys(data[0] || {}).map((key) => (
+                    <th key={key}>{key}</th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    }
+              </thead>
+              <tbody>
+                {data.map((row, idx) => (
+                  <tr key={idx}>
+                    {Object.values(row).map((val, vIdx) => (
+                      <td key={vIdx}>{typeof val === 'number' ? val.toFixed(2) : val}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
 
-    return <p>No data available.</p>;
+      default:
+        return null;
+    }
   };
 
+  const isFavorited = mounted && prompt && favorites.includes(prompt);
+
   return (
-    <>
-      <Navbar onThemeToggle={handleThemeToggle} isDarkMode={isDarkMode} />
-      <div style={{ padding: '20px', marginTop: '80px', maxWidth: '1200px', marginLeft: 'auto', marginRight: 'auto' }}>
-        {/* ...existing code... */}
-              {/* Feedback floating section */}
-              <div style={{
-                position: 'fixed',
-                bottom: 24,
-                right: 24,
-                zIndex: 9999,
-                width: 320,
-                background: '#fffbe6',
-                border: '2px solid #ffd700',
-                borderRadius: 12,
-                boxShadow: '0 2px 12px rgba(255, 215, 0, 0.10)',
-                padding: 18,
-                fontSize: '1em',
-                color: '#333',
-              }}>
-                <h4 style={{ margin: '0 0 8px 0', color: '#b48800', fontWeight: 700 }}>Share Feedback</h4>
-                <form onSubmit={handleFeedback}>
-                  <textarea
-                    value={feedback}
-                    onChange={e => setFeedback(e.target.value)}
-                    placeholder="Your feedback..."
-                    rows={3}
-                    style={{ width: '100%', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
-                    required
-                  />
-                  <button type="submit" style={{ marginTop: 8, background: '#ffd700', border: 'none', borderRadius: 4, padding: '8px 16px', fontWeight: 600, width: '100%' }}>
-                    Submit
-                  </button>
-                </form>
-                {feedbackMsg && <div style={{ marginTop: 8, color: feedbackMsg.startsWith('Thank') ? 'green' : 'red' }}>{feedbackMsg}</div>}
-              </div>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '20px', flexDirection: 'column' }}>
-          <h1 style={{ textAlign: 'center' }}>Conversational BI Dashboard</h1>
-          <button
-            onClick={handleThemeToggle}
-            style={{
-              padding: '8px 16px',
-              background: isDarkMode ? '#333' : '#f0f0f0',
-              color: isDarkMode ? 'white' : 'black',
-              border: 'none',
-              borderRadius: '20px',
-              cursor: 'pointer'
-            }}
-          >
-            {isDarkMode ? '☀️ Light' : '🌙 Dark'}
-          </button>
-        </div>
+    <div className={`page-container ${isDarkMode ? 'dark-mode' : ''}`}>
+      <Navbar theme={isDarkMode} onThemeToggle={toggleTheme} />
 
-        <div style={{ margin: '20px 0' }}>
-          <h3>Try one of these queries:</h3>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            {EXAMPLE_PROMPTS.map((p) => (
-              <button
-                key={p}
-                onClick={() => handleExampleClick(p)}
-                style={{
-                  padding: '10px 16px',
-                  background: '#667eea',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer'
-                }}
-              >
-                {p}
+      <div className="main-content">
+        {/* File Upload Section */}
+        <section className="upload-section">
+          <UploadCSV onFileUpload={handleFileUpload} currentFile={currentFile} />
+        </section>
+
+        {/* Search Section */}
+        <section className="search-section">
+          <h1 className="title">🚀 Conversational Business Intelligence</h1>
+          <p className="subtitle">Ask any question about your data in plain English</p>
+
+          <form onSubmit={handleSubmit} className="query-form">
+            <div className="input-wrapper">
+              <input
+                type="text"
+                placeholder="E.g., 'Show revenue by campaign type' or 'Top 10 products by ROI'"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                className="search-input"
+                disabled={loading}
+              />
+              <button type="submit" disabled={loading} className="search-button">
+                {loading ? '🔄 Generating...' : '✨ Generate Dashboard'}
               </button>
-            ))}
-          </div>
-        </div>
-
-        {favorites.length > 0 && mounted && (
-          <div style={{ margin: '20px 0' }}>
-            <h3>⭐ Your Favorites:</h3>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              {favorites.map((fav) => (
+              {prompt && (
                 <button
-                  key={fav}
-                  onClick={() => handleExampleClick(fav)}
-                  style={{
-                    padding: '8px 12px',
-                    background: '#ffd700',
-                    color: 'black',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer'
-                  }}
+                  type="button"
+                  className={`favorite-button ${isFavorited ? 'favorited' : ''}`}
+                  onClick={() => toggleFavorite(prompt)}
+                  title="Add to favorites"
                 >
-                  {fav}
+                  {isFavorited ? '⭐' : '☆'}
                 </button>
-              ))}
+              )}
             </div>
-          </div>
-        )}
+          </form>
 
-        {queryHistory.length > 0 && mounted && (
-          <div style={{ margin: '20px 0' }}>
-            <h3>🕒 Recent Queries:</h3>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              {queryHistory.slice(0, 5).map((hist, index) => (
-                <button
-                  key={index}
-                  onClick={() => handleExampleClick(hist)}
-                  style={{
-                    padding: '6px 10px',
-                    background: '#f0f0f0',
-                    color: 'black',
-                    border: '1px solid #ccc',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {hist}
-                </button>
-              ))}
+          {error && (
+            <div className="error-box">
+              <strong>⚠️ Error:</strong> {error}
             </div>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} style={{ margin: '20px 0' }}>
-          <input
-            type="text"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Ask a question..."
-            style={{
-              padding: '10px',
-              width: '300px',
-              border: '1px solid #ccc',
-              borderRadius: '4px',
-              marginRight: '10px'
-            }}
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              padding: '10px 20px',
-              background: '#667eea',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            {loading ? 'Loading...' : 'Ask'}
-          </button>
-          {response && mounted && (
-            <button
-              type="button"
-              onClick={exportData}
-              style={{
-                padding: '10px 15px',
-                background: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                marginLeft: '10px'
-              }}
-            >
-              📥 Export
-            </button>
           )}
-        </form>
 
-        {response && (
-          <div style={{ margin: '20px 0', padding: '20px', background: '#f5f5f5', borderRadius: '8px' }}>
-            <h2>Result</h2>
-            {renderChart(response)}
-            {/* Simple analysis/summary for non-executives */}
-            {response.summary && (
-              <div style={{
-                marginTop: 32,
-                padding: 24,
-                background: '#fffbe6',
-                borderRadius: 10,
-                border: '2px solid #ffd700',
-                boxShadow: '0 2px 12px rgba(255, 215, 0, 0.10)',
-                color: '#333',
-                fontSize: '1.15em',
-                maxWidth: 700,
-                marginLeft: 'auto',
-                marginRight: 'auto',
-                textAlign: 'left',
-                fontWeight: 500
-              }}>
-                <h3 style={{ marginBottom: 12, color: '#b48800', fontWeight: 700, fontSize: '1.3em' }}>Analysis</h3>
-                {/* Input Analysis */}
-                <div style={{ marginBottom: 14, padding: '10px 0', borderBottom: '1px solid #ffe066' }}>
-                  <b>Input Query:</b> <span style={{ color: '#0070f3' }}>{prompt}</span>
+          {loading && (
+            <div className="loading-indicator">
+              <div className="spinner"></div>
+              <p>Analyzing your data and generating dashboard...</p>
+            </div>
+          )}
+
+          {/* Example Prompts */}
+          {!response && !loading && (
+            <div className="examples-section">
+              <h3>💡 Try These Queries:</h3>
+              <div className="examples-grid">
+                {EXAMPLE_PROMPTS.map((example, idx) => (
+                  <button
+                    key={idx}
+                    className="example-button"
+                    onClick={() => handleExampleClick(example)}
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Results Section */}
+        {response && !loading && (
+          <section className="results-section">
+            <div className="chart-container">{renderChart()}</div>
+
+            {/* Analysis & Summary */}
+            <div className="insights-panel">
+              <h3>📊 Analysis</h3>
+              <p className="analysis-text">{response.analysis}</p>
+
+              {response.summary && (
+                <div className="summary-stats">
+                  <h4>📈 Key Metrics</h4>
+                  <div className="stats-grid">
+                    {Object.entries(response.summary)
+                      .slice(0, 4)
+                      .map(([key, value]) => (
+                        <div key={key} className="stat-item">
+                          <span className="stat-label">{key.replace(/_/g, ' ')}</span>
+                          <span className="stat-value">
+                            {typeof value === 'number'
+                              ? value > 1000
+                                ? `₹${(value / 1000).toFixed(1)}K`
+                                : value.toFixed(2)
+                              : value}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
                 </div>
-                {/* Output/Chart Analysis */}
-                <div style={{ marginBottom: 18 }}>
-                  <b>Output:</b> {response.chartType && (
-                    <span style={{ color: '#a020f0' }}>
-                      {(() => {
-                        switch (response.chartType) {
-                          case 'bar': return 'Bar chart (comparison)';
-                          case 'line': return 'Line chart (trend over time)';
-                          case 'pie': return 'Pie chart (distribution)';
-                          case 'area': return 'Area chart (volume/trend)';
-                          case 'scatter': return 'Scatter plot (correlation)';
-                          case 'table': return 'Table (summary statistics)';
-                          default: return response.chartType;
-                        }
-                      })()}
-                    </span>
-                  )}
-                  {response.xKey && response.yKey && (
-                    <span> showing <b>{response.yKey.replace(/([A-Z])/g, ' $1').toLowerCase()}</b> by <b>{response.xKey.replace(/([A-Z])/g, ' $1').toLowerCase()}</b>.</span>
-                  )}
+              )}
+
+              {/* Suggested Follow-Ups */}
+              {response.suggested_follow_ups && response.suggested_follow_ups.length > 0 && (
+                <div className="follow-up-suggestions">
+                  <h4>💬 Suggested Questions:</h4>
+                  <div className="suggestions-list">
+                    {response.suggested_follow_ups.map((suggestion, idx) => (
+                      <button
+                        key={idx}
+                        className="suggestion-button"
+                        onClick={() => handleExampleClick(suggestion)}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <ul style={{ margin: 0, paddingLeft: 28, color: '#444', fontSize: '1.08em' }}>
-                  {Object.entries(response.summary).map(([key, value]) => (
-                    <li key={key} style={{ marginBottom: 6 }}>
-                      <b>{key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}:</b> {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value}
-                    </li>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Chat Interface */}
+        {showChat && response && (
+          <section className="chat-section">
+            <h3>💬 Follow-up Questions</h3>
+            <div className="chat-messages" ref={chatContainerRef}>
+              {chatMessages.map((msg, idx) => (
+                <div key={idx} className={`chat-message ${msg.type}`}>
+                  <span className="message-icon">
+                    {msg.type === 'user' ? '👤' : msg.type === 'error' ? '❌' : '🤖'}
+                  </span>
+                  <span className="message-text">{msg.text}</span>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handleFollowUp} className="follow-up-form">
+              <input
+                type="text"
+                placeholder="Ask a follow-up question about this data..."
+                value={followUpInput}
+                onChange={(e) => setFollowUpInput(e.target.value)}
+                disabled={loading}
+                className="follow-up-input"
+              />
+              <button type="submit" disabled={loading} className="follow-up-button">
+                {loading ? '...' : '→'}
+              </button>
+            </form>
+          </section>
+        )}
+
+        {/* Query History & Favorites */}
+        {mounted && (queryHistory.length > 0 || favorites.length > 0) && !response && (
+          <section className="history-section">
+            {favorites.length > 0 && (
+              <div className="favorites-panel">
+                <h3>⭐ Favorite Queries</h3>
+                <div className="history-list">
+                  {favorites.map((query, idx) => (
+                    <button
+                      key={idx}
+                      className="history-item favorite"
+                      onClick={() => handleExampleClick(query)}
+                    >
+                      {query}
+                    </button>
                   ))}
-                </ul>
-                <div style={{ marginTop: 14, color: '#222', fontSize: '1.09em', fontWeight: 400 }}>
-                  {/* Friendly summary for non-executives */}
-                  {response.summary.totalRevenue && (
-                    <div style={{ marginBottom: 4 }}>Total revenue generated is <b style={{ color: '#008000' }}>₹{response.summary.totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b>.</div>
-                  )}
-                  {response.summary.totalCampaigns && (
-                    <div style={{ marginBottom: 4 }}>There are <b style={{ color: '#0070f3' }}>{response.summary.totalCampaigns}</b> unique campaigns in the data.</div>
-                  )}
-                  {response.summary.segments && (
-                    <div style={{ marginBottom: 4 }}>The data covers <b style={{ color: '#a020f0' }}>{response.summary.segments}</b> customer segments.</div>
-                  )}
-                  {response.summary.avgROI && (
-                    <div style={{ marginBottom: 4 }}>The average ROI across all campaigns is <b style={{ color: '#e67e22' }}>{response.summary.avgROI.toFixed(2)}%</b>.</div>
-                  )}
                 </div>
               </div>
             )}
-          </div>
+
+            {queryHistory.length > 0 && (
+              <div className="history-panel">
+                <h3>🕐 Recent Queries</h3>
+                <div className="history-list">
+                  {queryHistory.slice(0, 5).map((query, idx) => (
+                    <button
+                      key={idx}
+                      className="history-item"
+                      onClick={() => handleExampleClick(query)}
+                    >
+                      {query}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
         )}
       </div>
-    </>
+    </div>
   );
 }
