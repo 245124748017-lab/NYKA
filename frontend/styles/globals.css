@@ -156,6 +156,48 @@ body.dark-mode {
   border-color: #ffd700;
 }
 
+.voice-button {
+  padding: 12px 16px;
+  font-size: 1.5rem;
+  background: white;
+  border: 2px solid #667eea;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.voice-button:hover:not(:disabled) {
+  background: #f0f4ff;
+  transform: scale(1.05);
+}
+
+.voice-button.listening {
+  background: #667eea;
+  border-color: #667eea;
+  animation: pulse 0.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(102, 126, 234, 0);
+  }
+}
+
+.dark-mode .voice-button {
+  background: #2d3748;
+  border-color: #667eea;
+}
+
+.dark-mode .voice-button:hover:not(:disabled) {
+  background: #4a5568;
+}
+
 .error-box {
   background: #fed7d7;
   border-left: 4px solid #fc8181;

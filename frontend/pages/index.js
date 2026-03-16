@@ -50,7 +50,40 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState([]);
   const [followUpInput, setFollowUpInput] = useState('');
   const [showChat, setShowChat] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const chatContainerRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  // Initialize Speech Recognition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = false;
+        recognitionRef.current.interimResults = true;
+        recognitionRef.current.language = 'en-US';
+
+        recognitionRef.current.onstart = () => setIsListening(true);
+        recognitionRef.current.onend = () => setIsListening(false);
+        recognitionRef.current.onresult = (event) => {
+          let interimTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              setPrompt((prev) => prev + transcript);
+            } else {
+              interimTranscript += transcript;
+            }
+          }
+        };
+        recognitionRef.current.onerror = (event) => {
+          console.error('Speech recognition error:', event.error);
+          setError(`Voice input error: ${event.error}`);
+        };
+      }
+    }
+  }, []);
 
   // Load from localStorage
   useEffect(() => {
@@ -354,6 +387,20 @@ export default function Home() {
     }
   };
 
+  const toggleVoiceInput = () => {
+    if (!recognitionRef.current) {
+      setError('Voice input not supported in your browser');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      setPrompt('');
+      recognitionRef.current.start();
+    }
+  };
+
   const isFavorited = mounted && prompt && favorites.includes(prompt);
 
   return (
@@ -384,6 +431,15 @@ export default function Home() {
                 className="search-input"
                 disabled={loading}
               />
+              <button
+                type="button"
+                className={`voice-button ${isListening ? 'listening' : ''}`}
+                onClick={toggleVoiceInput}
+                title={isListening ? 'Stop listening' : 'Start voice input'}
+                disabled={loading}
+              >
+                {isListening ? '🎤' : '🎤'}
+              </button>
               <button type="submit" disabled={loading} className="search-button">
                 {loading ? '🔄 Generating...' : '✨ Generate Dashboard'}
               </button>
