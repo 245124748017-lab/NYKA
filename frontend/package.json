@@ -11,6 +11,7 @@
     "axios": "latest",
     "csv-parser": "^3.2.0",
     "formidable": "^3.5.4",
+    "html2canvas": "^1.4.1",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",

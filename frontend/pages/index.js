@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
+import html2canvas from 'html2canvas';
 import Navbar from '../components/Navbar';
 import SearchBar from '../components/SearchBar';
 import UploadCSV from '../components/UploadCSV';
@@ -65,8 +66,10 @@ export default function Home() {
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const chatContainerRef = useRef(null);
   const recognitionRef = useRef(null);
+  const chartContainerRef = useRef(null);
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [speechCompleted, setSpeechCompleted] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -520,6 +523,99 @@ export default function Home() {
     }
   };
 
+  const exportAsCSV = () => {
+    if (!response || !response.data) return;
+    setExportLoading(true);
+    try {
+      const { data, xKey, yKey } = response;
+      const headers = [xKey, yKey];
+      const rows = data.map(item => [item[xKey], item[yKey]]);
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.join(','))
+      ].join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `chart_data_${new Date().getTime()}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('CSV export error:', err);
+      alert('Failed to export as CSV');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const exportAsJSON = () => {
+    if (!response) return;
+    setExportLoading(true);
+    try {
+      const exportData = {
+        query: prompt,
+        chartType: response.chartType,
+        analysis: response.analysis,
+        data: response.data,
+        exportedAt: new Date().toISOString()
+      };
+      const jsonString = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `chart_data_${new Date().getTime()}.json`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('JSON export error:', err);
+      alert('Failed to export as JSON');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const exportAsPNG = async () => {
+    if (!chartContainerRef.current) {
+      alert('Chart not found');
+      return;
+    }
+    setExportLoading(true);
+    try {
+      // Use html2canvas to capture the chart with all styles preserved
+      const canvas = await html2canvas(chartContainerRef.current, {
+        allowTaint: true,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        scale: 2, // Higher resolution
+      });
+      
+      // Convert canvas to blob and download
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `chart_${new Date().getTime()}.png`;
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        setExportLoading(false);
+      }, 'image/png');
+    } catch (err) {
+      console.error('PNG export error:', err);
+      alert('Failed to export chart as PNG. Please try again.');
+      setExportLoading(false);
+    }
+  };
+
   return (
     <div className={`page-container ${isDarkMode ? 'dark-mode' : ''}`}>
       <Navbar theme={isDarkMode} onThemeToggle={toggleTheme} />
@@ -609,10 +705,25 @@ export default function Home() {
         {/* Results Section */}
         {response && !loading && (
           <section className="results-section">
-            <div className="chart-container">{renderChart()}</div>
+            <div className="chart-container" ref={chartContainerRef}>{renderChart()}</div>
 
             {/* Analysis & Summary */}
             <div className="insights-panel">
+              <div className="export-section">
+                <h4>📥 Export Results</h4>
+                <div className="export-buttons-sidebar">
+                  <button className="export-btn png-btn" onClick={exportAsPNG} disabled={exportLoading} title="Download chart as PNG">
+                    📥 PNG
+                  </button>
+                  <button className="export-btn csv-btn" onClick={exportAsCSV} disabled={exportLoading} title="Download data as CSV">
+                    📊 CSV
+                  </button>
+                  <button className="export-btn json-btn" onClick={exportAsJSON} disabled={exportLoading} title="Download as JSON">
+                    📄 JSON
+                  </button>
+                </div>
+              </div>
+              
               <h3>📊 Analysis</h3>
               <p className="analysis-text">{response.analysis}</p>
 
